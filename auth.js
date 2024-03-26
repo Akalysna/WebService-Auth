@@ -35,35 +35,62 @@ export const Auth = {
             })
         })
     },
+    deleteRole(userId, role) {
+      return new Promise((resolve, reject) => {
 
-    getUser(uid) {
+        this.getRoleId(role).then((res) => {
+            let query = "DELETE FROM `possede` WHERE id_users = ? AND id_roles = ?;"
+            let param = [res, userId]
 
-        return new Promise((resolve, reject) => {
-            const query = "SELECT `uid`, `login`, `created_at`, `update_at` FROM users WHERE uid = ?;";
-            connection.query(query, [uid], (err, result) => {
+            connection.query(query, param, (err, result) => {
                 if (!err) {
-
-                    let user = result[0]
-
-                    let query = "SELECT name FROM roles INNER JOIN possede on roles.id_roles = possede.id_roles where id_users = ?"
-                    connection.query(query, [], (err, result) => {
-                        if (!err) {
-
-                            //Récupération des roles
-                            user[roles] = result
-                            resolve(user)
-                        } else
-                            reject(err)
-                    })
-                }
-                else {
-                    reject({
-                        status: 422,
-                        err: err
-                    });
+                    resolve(result)
+                } else {
+                    reject(err)
                 }
             })
         })
+    })
+    },
+
+    updateUser (body, uid) {
+      return new Promise ((resolve, reject) => {
+        let query = "UPDATE `users` SET `login`=?,`password`=?, `update_at`= NOW(), `status`=? WHERE uid = ?;";
+        let hashPassword = bcrypt.hashSync(body.password, saltRounds)
+        let params = [
+          body.login,
+          hashPassword,
+          body.status,
+          uid
+        ]
+        connection.query(query, params, async (err, results) => {
+          if(!err) {
+            if (body.roles.length > 0) {
+              let user = await Auth.getUser(uid);
+              for (let role in body.roles) {
+                if (user.roles.includes(body.roles[role])) {
+                  delete user.roles[body.roles[role]]
+                  continue;
+                }
+                else {
+                  await Auth.addRole(uid, body.roles[role]);
+                  delete user.roles[body.roles[role]]
+                }
+              }
+              if (user.roles.length > 0) {
+                for (let role in user.roles) {
+                  Auth.deleteRole(uid, user.roles[role])
+                }
+              }
+              user = await Auth.getUser(uid);
+              resolve(user);
+            }
+          }
+          else {
+            reject()
+          }
+        })
+      })
     },
 
     createAccount(body) {
@@ -123,8 +150,6 @@ export const Auth = {
                                 else
                                     reject(err)
                             })
-
-
                         } else {
                             reject(err)
                         }
@@ -154,6 +179,29 @@ export const Auth = {
     },
 
     getUser(uid) {
-
+      return new Promise((resolve, reject) => {
+        const query = "SELECT uid, login, GROUP_CONCAT(roles.name, ',') as roles, created_at, updated_at FROM users LEFT JOIN possede on possede.id_users = users.id_users LEFT JOIN roles on roles.id_role = possede.id_roles WHERE users.uid = ?;";
+        connection.query(query, [uid], (err, results) => {
+          if (!err) {
+            const user = {...results[0]};
+            user.roles = user.roles.split(',');
+            resolve(results[0]);
+          }
+          else {
+            reject(err);
+          }
+        })
+      })
+    },
+    getToken (body) {
+      let query = "SELECT `uid`, `login`, `password` FROM `users` WHERE login = ?;";
+      connection.query(query, async (err, result) => {
+        if (!err) {
+          if(bcrypt.compareSync(body.password, result[0].password)) {
+            const user = await Auth.getUser(result[0].uid)
+            const token = jwt.sign({...user}, process.env.SECRET, {expiresIn: 60*60})
+          }
+        }
+      })
     }
 }
